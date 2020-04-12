@@ -80,6 +80,7 @@ build/setup.cfg: requirements.txt
 	find build/ -mindepth 1 -not -name setup.cfg -delete
 	pip3 install -r $^ -t $(@D)
 	touch $@
+	-touch build/.gitkeep
 
 deploy: $(addprefix deploy/,$(call FILTER_OUT,__init__, $(notdir $(wildcard src/*)))) .env
 deploy/%: _check-aws-env _check-alias _check-artifact-bucket templates/dist dist/%.zip
