@@ -123,3 +123,4 @@ packaged-templates/*.json
 templates/dist
 dist/*.zip
 _api*
+lib/env.py
