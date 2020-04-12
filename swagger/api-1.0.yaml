@@ -1,0 +1,517 @@
+swagger: '2.0'
+info:
+  version: '1.0'
+  title: Boilerplate Mobile API
+  description: |
+    Boilerplate example API
+  termsOfService: 'http://swagger.io/terms/'
+  contact:
+    name: bFAN Sports
+    email: support@bfansports.com
+host: bfansports.com
+schemes:
+  - https
+consumes:
+  - application/json
+produces:
+  - application/json
+paths:
+  /robots.txt:
+    get:
+      consumes:
+      - "application/json"
+      produces:
+      - "text/plain"
+      responses:
+        200:
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseTemplates:
+              text/plain: "User-agent: *\nDisallow: /"
+        requestTemplates:
+          application/json: "{\"statusCode\": 200}"
+        passthroughBehavior: "when_no_match"
+        type: "mock"
+    head:
+      consumes:
+      - "application/json"
+      produces:
+      - "text/plain"
+      responses:
+        200:
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseTemplates:
+              text/plain: "User-agent: *\nDisallow: /"
+        requestTemplates:
+          application/json: "{\"statusCode\": 200}"
+        passthroughBehavior: "when_no_match"
+        type: "mock"
+  /validate_username:
+    post:
+      description: |
+        Example of a POST request
+        Validate if the provided username is already used or not.
+      parameters:
+        - name: username
+          in: body
+          description: Username to validate
+          required: true
+          schema:
+            $ref: '#/definitions/Username'
+      responses:
+        '200':
+          description: Success. Get User back
+          schema:
+            $ref: '#/definitions/Success'
+        '403':
+          description: Bad username
+          schema:
+            $ref: '#/definitions/Error'
+        '500':
+          description: Execution error
+          schema:
+            $ref: '#/definitions/Error'
+      x-amazon-apigateway-auth:
+        type: aws_iam
+      x-amazon-apigateway-integration:
+        type: aws
+        uri: 'arn:aws:apigateway:%AWS_REGION%:lambda:path/2015-03-31/functions/arn:aws:lambda:%AWS_REGION%:%AWS_ACCOUNT%:function:ExampleLambdaFunction:%ALIAS%/invocations'
+        credentials: 'arn:aws:iam::*:user/*'
+        httpMethod: POST
+        requestTemplates: null
+        requestParameters: null
+        cacheNamespace: null
+        cacheKeyParameters: []
+        responses:
+          'username_exists|bad_length|no_username':
+            statusCode: '403'
+            responseParameters: null
+            responseTemplates:
+              application/json: |
+                {
+                  "errorMessage" : $input.json('$.errorMessage')
+                }
+          'error.*':
+            statusCode: '500'
+            responseParameters: null
+            responseTemplates:
+              application/json: |
+                {
+                  "errorMessage" : $input.json('$.errorMessage')
+                }
+          default:
+            statusCode: '200'
+            responseParameters: null
+            responseTemplates: null
+  /redeem/{redeem_id}:
+    get:
+      description: |
+        Example of a GET request using Path variable.
+        Get one user redeem item using.
+      parameters:
+        - name: redeem_id
+          in: path
+          description: ID of the redeem to get
+          required: true
+          type: string
+      responses:
+        '200':
+          description: A redeem item
+          schema:
+            $ref: '#/definitions/Redeem'
+        '500':
+          description: Execution error
+          schema:
+            $ref: '#/definitions/Error'
+      x-amazon-apigateway-auth:
+        type: aws_iam
+      x-amazon-apigateway-integration:
+        type: aws
+        uri: 'arn:aws:apigateway:%AWS_REGION%:lambda:path/2015-03-31/functions/arn:aws:lambda:%AWS_REGION%:%AWS_ACCOUNT%:function:ExampleLambdaFunction:%ALIAS%/invocations'
+        credentials: 'arn:aws:iam::*:user/*'
+        httpMethod: POST
+        requestTemplates:
+          application/json: |
+            {
+              "redeem_id" : "$input.params('redeem_id')"
+            }
+        requestParameters:
+          integration.request.path.org_id: method.request.path.redeem_id
+        cacheNamespace: null
+        cacheKeyParameters: null
+        responses:
+          default:
+            statusCode: '200'
+            responseParameters: null
+            responseTemplates: null
+          'error.*':
+            statusCode: '500'
+            responseParameters: null
+            responseTemplates:
+              application/json: |
+                {
+                  "errorMessage" : $input.json('$.errorMessage')
+                }
+  /redeem:
+    get:
+      description: |
+        Example of a GET request using Query strings
+        Get ALL user's redeemed items
+      parameters:
+        - name: org_id
+          in: query
+          description: ID of the org the user want the list for
+          required: true
+          type: string
+        - name: limit
+          in: query
+          description: Limit the number of returned data
+          required: false
+          type: integer
+        - name: offset
+          in: query
+          description: Where to start searching in the result array
+          required: false
+          type: integer
+          minimum: 0
+      responses:
+        '200':
+          description: List of redeemed items
+          schema:
+            $ref: '#/definitions/RedeemList'
+        '500':
+          description: Execution error
+          schema:
+            $ref: '#/definitions/Error'
+      x-amazon-apigateway-auth:
+        type: aws_iam
+      x-amazon-apigateway-integration:
+        type: aws
+        uri: 'arn:aws:apigateway:%AWS_REGION%:lambda:path/2015-03-31/functions/arn:aws:lambda:%AWS_REGION%:%AWS_ACCOUNT%:function:ExampleLambdaFunction:%ALIAS%/invocations'
+        credentials: 'arn:aws:iam::*:user/*'
+        httpMethod: POST
+        requestTemplates:
+          application/json: |
+            {
+              "org_id" : "$input.params('org_id')"
+              #if($input.params('limit') != ""),"limit" : $input.params('limit')#end
+              #if($input.params('offset') != ""),"offset" : $input.params('offset')#end
+            }
+        requestParameters:
+          integration.request.querystring.org_id: method.request.querystring.org_id
+          integration.request.querystring.limit: method.request.querystring.limit
+          integration.request.querystring.offset: method.request.querystring.offset
+        cacheNamespace: null
+        cacheKeyParameters: null
+        responses:
+          default:
+            statusCode: '200'
+            responseParameters: null
+            responseTemplates: null
+          'error.*':
+            statusCode: '500'
+            responseParameters: null
+            responseTemplates:
+              application/json: |
+                {
+                  "errorMessage" : $input.json('$.errorMessage')
+                }
+  /users:
+    get:
+      description: |
+        Example of a GET request with mapping template to transform the Lambda output on the fly
+        Get the requested user from the DB. User object contains current level info.
+      parameters:
+        - name: identityId
+          in: query
+          description: 'The user_id of the user to lookup. If none provided then we looked the current connected user.'
+          required: false
+          type: string
+        - name: org_id
+          in: query
+          description: |
+            The org_id of the org the user subcribed to. If none provided then we\'ll inject the "global" level.
+          required: false
+          type: string
+      responses:
+        '200':
+          description: The requested user
+          schema:
+            $ref: '#/definitions/User'
+        '404':
+          description: User not found
+          schema:
+            $ref: '#/definitions/Error'
+        '500':
+          description: Execution Error
+          schema:
+            $ref: '#/definitions/Error'
+      x-amazon-apigateway-auth:
+        type: aws_iam
+      x-amazon-apigateway-integration:
+        type: aws
+        uri: 'arn:aws:apigateway:%AWS_REGION%:lambda:path/2015-03-31/functions/arn:aws:lambda:%AWS_REGION%:%AWS_ACCOUNT%:function:ExampleLambdaFunction:%ALIAS%/invocations'
+        credentials: 'arn:aws:iam::*:user/*'
+        httpMethod: POST
+        requestTemplates:
+          application/json: |
+            {
+              "org_id" : "$input.params('org_id')",
+              "identityId" : "$input.params('identityId')"
+            }
+        requestParameters:
+          integration.request.querystring.org_id: method.request.querystring.org_id
+          integration.request.querystring.identityId: method.request.querystring.identityId
+        cacheNamespace: users_get
+        cacheKeyParameters: [
+           "method.request.querystring.org_id",
+           "method.request.querystring.identityId"
+        ]
+        responses:
+          'no_user':
+            statusCode: '404'
+            responseParameters: null
+            responseTemplates:
+              application/json: |
+                {
+                  "errorMessage" : $input.json('$.errorMessage')
+                }
+          'error.*':
+            statusCode: '500'
+            responseParameters: null
+            responseTemplates:
+              application/json: |
+                {
+                  "errorMessage" : $input.json('$.errorMessage')
+                }
+          default:
+            statusCode: '200'
+            responseParameters: null
+            responseTemplates:
+              application/json: |
+                #set($elem = $input.path('$'))
+                {
+                  "identityId": "$elem.identityId",
+                  "identifier": "$elem.identifier",
+                  "provider": "$elem.provider",
+                  "firstname": "$elem.firstname",
+                  "lastname": "$elem.lastname",
+                  "photoURL": "$elem.photoURL",
+                  "email": "$elem.email",
+                  "displayName": "$elem.displayName",
+                  "username": "$elem.username",
+                  "city": "$elem.city",
+                  "address1": "$util.urlEncode($elem.address1)",
+                  "address2": "$util.urlEncode($elem.address2)",
+                  "zip": "$elem.zip",
+                  "country": "$elem.country",
+                  "message": "$util.urlEncode($elem.message)",
+                  "gender": "$elem.gender",
+                  "birthdate": "$elem.birthdate",
+                  "phone": "$elem.phone",
+                  "subscriber_id": "$elem.subscriber_id"
+                  #if($elem.avatar.toString() != ''),"avatar": $input.json('$.avatar')#end
+                  #if($elem.points.toString() != ''),"points": $input.json('$.points')#end
+                  #if($elem.subscriber_card.toString() != ''),"subscriber_card": $input.json('$.subscriber_card')#end
+                  #if($elem.current_ranking.toString() != ''),"current_ranking": $input.json('$.current_ranking')#end
+                  #if($elem.rankings.toString() != ''),"rankings": $input.json('$.rankings')#end
+                }
+
+definitions:
+  Error:
+    type: object
+    required:
+      - errorMessage
+    properties:
+      errorMessage:
+        type: string
+  Success:
+    type: object
+    required:
+      - message
+    properties:
+      message:
+        type: string
+  Empty:
+    type: object
+    required:
+      - message
+    properties:
+      message:
+        type: string
+  Username:
+    type: object
+    required:
+      - username
+    properties:
+      username:
+        type: string
+      org_id:
+        type: string
+        description: Organization id of the app, only use it from whitelabel app.
+  Redeem:
+    type: object
+    description: One redeem
+    required:
+      - create_time
+      - id
+      - email
+      - identityId
+      - notes
+      - reward
+      - status
+      - update_time
+    properties:
+      create_time:
+        type: integer
+        description: Time when the redeem was created
+      email:
+        type: string
+        description: Email address of the user who redeemed
+      id:
+        type: string
+        description: The reward ID
+      identityId:
+        type: string
+        description: Identity of the user who redeemed
+      notes:
+        type: string
+        description: Note from the admin when changing status. Could be empty string.
+      status:
+        type: string
+        description: Status of the redeem (pending or active)
+      update_time:
+        type: integer
+        description: Time when the redeem was updated by an admin
+  RedeemList:
+    type: object
+    description: List of `Redeem` object returned when calling /redeem GET
+    required:
+      - Items
+    properties:
+      Items:
+        type: array
+        items:
+          $ref: '#/definitions/Redeem'
+  User:
+    type: object
+    description: One User
+    required:
+      - org_id
+      - identityId
+    properties:
+      org_id:
+        description: |
+          The org_id of the org where the user tried to signin from
+        type: string
+      identityId:
+        type: string
+        description: IdentityId coming from AWS Cognito. We identify the user with this.
+      identifier:
+        type: string
+        description: "ID coming from the specific social platform. Different format, it's ok."
+      provider:
+        type: string
+        description: 'Name of the social provide (google, facebook, email, reach5)'
+      firstname:
+        type: string
+      lastname:
+        type: string
+      login_count:
+        type: integer
+        description: Number of time the user logged in
+      photoURL:
+        type: string
+        description: Photo coming from social media
+      email:
+        type: string
+      phone:
+        type: string
+      displayName:
+        type: string
+        description: Coming from social if any. Combine firstname / lastname if none available
+      username:
+        type: string
+        description: Can be entered in the mobile app. Empty by default
+      address1:
+        type: string
+      address2:
+        type: string
+      address_validated:
+        description: True if the address got validated by Google
+        type: boolean
+      zip:
+        type: string
+      city:
+        type: string
+      country:
+        type: string
+      message:
+        type: string
+      gender:
+        type: string
+        description: The genre of the user
+        enum:
+          - female
+          - male
+      birthdate:
+        type: string
+      merged_identities:
+        description: Flag that shows if the user identities were merged. Turn back to false, to force a merge again
+        type: boolean
+      subscriber_id:
+        type: string
+        description: Id of the subscription of the user for the current team
+      subscriber_card:
+        type: object
+        properties:
+          barcodeid:
+            type: string
+            description: Subscriber barcode ID used to display barcode on their card.
+          gate:
+            type: string
+            description: Gate directing towards a subscriber's reserved seat.
+          row:
+            type: string
+            description: Row directing towards a subscriber's reserved seat.
+          seat:
+            type: string
+            description: Sear directing towards a subscriber's reserved seat.
+          stairs:
+            type: string
+            description: Stairs directing towards a subscriber's reserved seat.
+      access_token:
+        type: string
+        description: Access token of user
+      emails:
+        type: array
+        items:
+            type: object
+            required:
+              - state
+              - email
+            properties:
+              state:
+                description: For now there are 2 states for emaisl PENDING and APPROVED. Only display APPROVED emails.
+                type: string
+              email:
+                description: The email as a string
+                type: string
+      external_provider:
+          type: string
+          enum:
+            - null
+            - facebook
+            - google
+            - apple
