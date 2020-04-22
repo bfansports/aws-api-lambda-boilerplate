@@ -1,4 +1,6 @@
 import boto3
+import sys
+import traceback
 from lib import env
 
 # Hello Birdie ERROR Class. To use to throw a formatted error.
