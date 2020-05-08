@@ -84,7 +84,7 @@ build/setup.cfg: requirements.txt
 
 deploy: $(addprefix deploy/,$(call FILTER_OUT,__init__, $(notdir $(wildcard src/*)))) .env
 deploy/%: _check-aws-env _check-alias _check-artifact-bucket templates/dist dist/%.zip
-	aws cloudformation package --template-file templates/$*.template  --s3-bucket ${AWS_BUCKET_ARTIFIFACT} --output-template-file packaged-templates/$*-packaged.json
+	aws cloudformation package --template-file templates/$*.template  --s3-bucket ${AWS_BUCKET_ARTIFACT} --output-template-file packaged-templates/$*-packaged.json
 	aws cloudformation deploy --template-file packaged-templates/$*-packaged.json --stack-name $* --capabilities CAPABILITY_IAM --parameter-overrides Env=${ENV}
 	./scripts/lambda_autoalias.sh $* ${ALIAS} $(if ${PROFILE},--profile ${PROFILE},)
 
