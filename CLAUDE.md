@@ -6,12 +6,12 @@ Template repository for creating new Python Lambda API projects at bFAN Sports. 
 
 ## Tech Stack
 
-- **Runtime**: Python 3.7 (AWS Lambda)
-- **Infrastructure**: AWS CloudFormation, AWS Lambda, API Gateway
-- **API Spec**: Swagger/OpenAPI
+- **Runtime**: Python 3.7 (AWS Lambda) — **EOL, upgrade to 3.12 recommended** (see FINDINGS.md H-1)
+- **Infrastructure**: AWS CloudFormation (native, not SAM)
+- **API Spec**: Swagger/OpenAPI 2.0
 - **Build Tool**: Make (Makefile-driven workflows)
-- **Deployment**: AWS CLI, CloudFormation stack management
-- **Testing**: Custom local Lambda emulator (run.py)
+- **Deployment**: AWS CLI + CloudFormation stack management
+- **Testing**: Custom local Lambda emulator (`run.py`) — no unit test framework
 - **Storage**: S3 (Lambda packages, CloudFormation artifacts, environment files)
 
 ## Quick Start
@@ -29,6 +29,7 @@ export AWS_BUCKET_CODE=your-lambda-bucket
 export AWS_BUCKET_ARTIFACT=your-cf-artifact-bucket
 export AWS_ACCOUNT=123456789012
 export AWS_DEFAULT_REGION=us-east-1
+export ALIAS=dev  # Lambda alias — required for deploy and API targets
 
 # Run lambda locally
 make run/ExampleLambdaFunction EVENT=test/data/default.json
@@ -43,9 +44,6 @@ make deploy/ExampleLambdaFunction
 make
 ```
 
-<!-- Ask: Is Python 3.7 still the target? AWS Lambda now supports 3.11+. Should this be updated? -->
-<!-- Ask: Is AWSENV still the standard tool, or has the team moved to another AWS profile manager? -->
-
 ## Project Structure
 
 ```
@@ -55,21 +53,26 @@ aws-api-lambda-boilerplate/
 │       ├── __init__.py
 │       └── index.py          # handler() entrypoint
 ├── lib/                      # Shared libraries for all lambdas
+│   ├── __init__.py
 │   ├── common.py             # HBError error handling class
 │   └── env.py                # Runtime environment variables (generated at build)
 ├── templates/                # CloudFormation templates (one per lambda/API)
-├── swagger/                  # API Gateway definitions (OpenAPI/Swagger)
+│   └── ExampleLambdaFunction.template  # JSON CF template
+├── swagger/                  # API Gateway definitions (OpenAPI/Swagger 2.0)
 │   └── api-1.0.yaml
-├── test/                     # Test event fixtures
-│   ├── data/default.json
+├── test/                     # Test event fixtures + mock context
+│   ├── data/default.json     # Sample Lambda event (empty object)
 │   └── MockContext.py        # Lambda context simulator
 ├── scripts/                  # Build/deployment helper scripts
-├── build/                    # Build artifacts (gitignored)
+│   ├── lambda_autoalias.sh   # Create/update Lambda alias after deploy
+│   └── lambda_set_perms.sh   # Grant API Gateway invoke permissions
+├── build/                    # Build artifacts — pip dependencies installed here (gitignored)
 ├── dist/                     # Lambda ZIP packages (gitignored)
 ├── packaged-templates/       # CloudFormation templates with S3 refs (gitignored)
-├── requirements.txt          # Python dependencies
+├── requirements.txt          # Python dependencies (unpinned — pin before production use)
 ├── run.py                    # Local lambda execution emulator
-└── Makefile                  # All build/deploy commands
+├── Makefile                  # All build/deploy commands
+└── .github/workflows/        # GitHub Actions (S3 backup only)
 ```
 
 ## Dependencies
@@ -79,134 +82,183 @@ aws-api-lambda-boilerplate/
 - S3 bucket for CloudFormation artifacts (`AWS_BUCKET_ARTIFACT`)
 - IAM roles for Lambda execution (defined in CloudFormation templates)
 - CloudWatch Logs (automatically created per Lambda)
+- SNS topic `hb-notification-email` (for error alarms — hardcoded in template)
 - API Gateway (optional, deployed via Swagger)
 
-**Python Libraries:**
-- Listed in `requirements.txt` — installed during build, packaged with Lambda
+**Python Libraries (requirements.txt):**
+- `boto3` — AWS SDK (NOTE: already included in Lambda runtime; bundling it bloats the ZIP)
+- `requests` — HTTP client
+- `requests-aws4auth` — AWS Signature V4 auth for requests
+- `urllib3` — HTTP library (dependency of requests)
+- `simplejson` — JSON encoder/decoder
+
+**None of these are version-pinned.** Pin before production use.
 
 **Environment Files:**
 - `.env` file downloaded from S3 at build time
 - Naming convention: `${AWSENV_NAME}_creds`
 - Stored in `${AWS_BUCKET_CODE}` bucket
-- Format: `KEY='value'` (shell-compatible)
+- Format: `KEY='value'` (shell-compatible, copied to `lib/env.py` as Python)
+- **Security concern:** Secrets are baked into the deployment ZIP — see FINDINGS.md C-1
 
 ## API / Interface
 
-**For New Lambda Projects:**
-1. Clone this boilerplate
-2. Remove `.git` and reinitialize
-3. Replace `ExampleLambdaFunction` with actual function name
-4. Update `templates/` with CloudFormation stack definition
+**Creating a New Lambda Project from This Boilerplate:**
+1. Clone this repo
+2. Remove `.git` and `git init` fresh
+3. Rename `src/ExampleLambdaFunction/` to your function name (PascalCase)
+4. Rename and update `templates/ExampleLambdaFunction.template` — change ALL resource names
 5. Update `swagger/` if creating API Gateway endpoints
-6. Commit to new repo
+6. **Scope IAM permissions** in the template — do NOT keep the wildcard `dynamodb:*` default
+7. Update `requirements.txt` with only the dependencies you need (remove `boto3`)
+8. Commit to new repo
 
 **Lambda Handler Contract:**
 ```python
 def handler(event, context):
-    # event: dict with request data (API Gateway, SNS, etc.)
-    # context: AWS Lambda context object
+    # event: dict with request data (API Gateway proxy, SNS, etc.)
+    # context: AWS Lambda context object (request_id, function_name, etc.)
     # Return: dict (for API Gateway) or None
     pass
 ```
 
-**Error Handling Pattern:**
+**Error Handling Pattern (HBError):**
 ```python
 from lib.common import HBError
 
-try:
-    # Lambda logic
-    pass
-except Exception as e:
-    raise HBError(500, "Internal error", e)
+def handler(event, context):
+    try:
+        # Business logic
+        result = do_work(event)
+        return result
+    except HBError as e:
+        # Controlled error — maps to specific HTTP status via Swagger
+        print(e)  # Logs formatted error to CloudWatch
+        raise Exception(e.what)  # e.what matches Swagger error regex
+    except Exception as e:
+        # Uncontrolled error — maps to 500 via 'error.*' regex in Swagger
+        print(HBError(str(type(e)) + " : " + str(e)))
+        raise Exception('error: descriptive message here')
 ```
+
+The Swagger file maps Lambda error messages to HTTP status codes using regex patterns in `x-amazon-apigateway-integration.responses`. For example:
+- `'user_not_found'` -> 404
+- `'error.*'` -> 500
+- `default` -> 200
 
 ## Key Patterns
 
-- **Function Isolation**: Each Lambda in its own `src/<function-name>/` directory
-- **Shared Libraries**: Common code in `lib/` (included in all Lambda packages)
+- **Function Isolation**: Each Lambda in its own `src/<FunctionName>/` directory
+- **Shared Libraries**: Common code in `lib/` (included in all Lambda ZIPs)
 - **CloudFormation-first**: All AWS resources defined as code in `templates/`
-- **Environment Variable Injection**: `.env` from S3 → `lib/env.py` at build time
-- **Local Testing**: `run.py` simulates Lambda execution locally with mock context
-- **ZIP Packaging**: Dependencies and code packaged as ZIP, uploaded to S3, referenced by CloudFormation
+- **Environment Variable Injection**: `.env` from S3 -> `lib/env.py` at build time (see Security section)
+- **Local Testing**: `run.py` simulates Lambda execution locally with `MockContext`
+- **ZIP Packaging**: Dependencies + `lib/` + function code packaged as ZIP, uploaded to S3
 - **Makefile Targets**: `make run/<name>`, `make build/<name>`, `make deploy/<name>`
-- **Swagger-driven API**: API Gateway created/updated from OpenAPI YAML
+- **Swagger-driven API**: API Gateway created/updated from OpenAPI YAML with variable substitution
+- **Lambda Aliases**: Every deploy creates/updates an alias (`ALIAS` env var) for safe rollbacks
+- **Error-to-HTTP Mapping**: HBError.what string -> Swagger regex -> HTTP status code
+
+## Security Defaults (READ BEFORE CLONING)
+
+The boilerplate ships with intentionally permissive defaults for ease of setup. **You MUST tighten these before production use:**
+
+| Default | Risk | Fix |
+|---------|------|-----|
+| `dynamodb:*` on all tables | Full DynamoDB access account-wide | Scope to specific table ARNs and actions |
+| `logs:*` on all log groups | Can delete any log group | Restrict to `CreateLogGroup`, `CreateLogStream`, `PutLogEvents` on own log group |
+| `credentials: 'arn:aws:iam::*:user/*'` in Swagger | Any AWS account can invoke | Use dedicated API GW execution role with account ID |
+| Secrets in `lib/env.py` | Plaintext in ZIP | Use Secrets Manager or SSM Parameter Store |
+| X-Ray `PassThrough` | No tracing unless caller sends header | Set to `Active` |
+| No log retention | Logs kept forever | Set `RetentionInDays` in CF template |
+| No input validation | Unvalidated event data | Add schema validation in handler |
 
 ## Environment
 
 **Build-time Environment Variables (required):**
-- `ENV` — Deployment environment (sandbox, prod)
-- `AWSENV_NAME` — AWSENV profile name (e.g., hb-sandbox, hb-prod)
-- `AWS_BUCKET_CODE` — S3 bucket for Lambda ZIP files
-- `AWS_BUCKET_ARTIFACT` — S3 bucket for packaged CloudFormation templates
-- `AWS_ACCOUNT` — AWS account ID (12-digit)
-- `AWS_DEFAULT_REGION` — AWS region (e.g., us-east-1, eu-west-1)
+| Variable | Purpose | Example |
+|----------|---------|--------|
+| `ENV` | Deployment environment | `sandbox`, `prod` |
+| `AWSENV_NAME` | AWSENV profile name | `hb-sandbox`, `hb-prod` |
+| `AWS_BUCKET_CODE` | S3 bucket for Lambda ZIPs | `my-lambda-code-bucket` |
+| `AWS_BUCKET_ARTIFACT` | S3 bucket for CF templates | `my-cf-artifacts-bucket` |
+| `AWS_ACCOUNT` | AWS account ID (12-digit) | `123456789012` |
+| `AWS_DEFAULT_REGION` | AWS region | `us-east-1`, `eu-west-1` |
+| `ALIAS` | Lambda alias name | `dev`, `staging`, `prod` |
 
 **Runtime Environment Variables (in Lambda):**
-- Sourced from `lib/env.py` (generated from `.env` file in S3)
-- Example: `EXAMPLE_VAR1`, `EXAMPLE_VAR2` — defined per environment
+- Sourced from `lib/env.py` (generated from `.env` file in S3 at build time)
+- All variables defined in the env file become Python module-level variables
 
 **AWS CLI Configuration:**
 - Must have credentials configured (`aws configure` or AWSENV)
-- IAM permissions: CloudFormation, Lambda, S3, IAM, CloudWatch, API Gateway
+- IAM permissions needed: CloudFormation, Lambda, S3, IAM, CloudWatch, API Gateway
 
 ## Deployment
 
 **Deployment Flow:**
-1. **Build**: `make build/<function-name>`
-   - Install dependencies from `requirements.txt`
-   - Download `.env` from S3 → `lib/env.py`
-   - Package function code + lib + dependencies into ZIP
-   - Upload ZIP to `${AWS_BUCKET_CODE}`
-2. **Package CloudFormation**: `make package/<function-name>`
-   - Replace local file paths in template with S3 URIs
-   - Upload template to `${AWS_BUCKET_ARTIFACT}`
-3. **Deploy Stack**: `make deploy/<function-name>`
-   - Execute CloudFormation create-stack or update-stack
-   - Wait for stack completion
-   - Output Lambda ARN and API Gateway URL (if applicable)
-
-**Manual Deployment Steps:**
-```bash
-# Ensure environment variables set
-make deploy/MyLambdaFunction
+```
+make deploy/<FunctionName>
+  ├── 1. _check-aws-env          # Verify AWSENV_NAME is set
+  ├── 2. _check-alias             # Verify ALIAS is set
+  ├── 3. _check-artifact-bucket   # Verify AWS_BUCKET_ARTIFACT is set
+  ├── 4. .env target              # Download ${AWSENV_NAME}_creds from S3 -> lib/env.py
+  ├── 5. dist/<name>.zip          # Build ZIP (pip install + lib/ + src/<name>/)
+  ├── 6. cf package               # Upload template to S3, replace local refs with S3 URIs
+  ├── 7. cf deploy                # Create/update CloudFormation stack
+  └── 8. lambda_autoalias.sh      # Create or update Lambda alias
 ```
 
+**API Gateway Deployment:**
+```bash
+# Create new API
+make api VERS=1.0 CREATE=1 ALIAS=prod
+
+# Update existing API and deploy to stage
+make api VERS=1.0 UPDATE=<api-id> STAGE=prod ALIAS=prod
+
+# Update without resetting Lambda permissions
+make api VERS=1.0 UPDATE=<api-id> ALIAS=prod NOPERMS=1
+```
+
+The `api` target performs variable substitution in the Swagger file:
+- `%AWS_ACCOUNT%` -> `${AWS_ACCOUNT}`
+- `%AWS_REGION%` -> `${AWS_DEFAULT_REGION}`
+- `%ALIAS%` -> `${ALIAS}`
+
 **CloudFormation Stack Naming:**
-<!-- Ask: What's the stack naming convention? Is it `<project>-<env>-<function>`? -->
+The stack name defaults to the function directory name (e.g., `ExampleLambdaFunction`). Set explicitly in `make deploy` if a different convention is needed.
 
 ## Testing
 
-**Local Execution:**
+**Local Execution (only testing method available):**
 ```bash
 # Run with sample event
 make run/ExampleLambdaFunction EVENT=test/data/default.json
 
 # Run with verbose output
 make run/ExampleLambdaFunction VERBOSE=1 EVENT=test/data/custom.json
+
+# Run with stdin input (type JSON, then Ctrl-D)
+make run/ExampleLambdaFunction
 ```
 
-**Test Data:**
-- Place sample events in `test/data/`
-- JSON format matching Lambda event structure (API Gateway, SNS, etc.)
+**No unit test framework is configured.** The `test/` directory contains only mock context and sample events. `test/README.md` says "Here you can put your unit tests files if you start implementing unit tests."
 
-**Mock Context:**
-- `test/MockContext.py` provides Lambda context simulator
-- Includes request_id, function_name, memory_limit, etc.
-
-<!-- Ask: Are there unit tests? Integration tests? Is pytest or unittest used? -->
-<!-- Ask: Is there a CI/CD pipeline (GitHub Actions, Jenkins) for automated testing? -->
+**No CI/CD pipeline for testing.** The only GitHub Action is an S3 backup on the `develop` branch (which does not match the `master` default branch).
 
 ## Gotchas
 
-- **Python Version Lock**: Code must be compatible with Python 3.7 (Lambda runtime constraint)
-- **Virtual Environment**: Always activate venv before running make commands
-- **Environment Variables**: Deployment fails silently if required env vars not set — check early
-- **S3 Bucket Permissions**: Build process requires read/write to both CODE and ARTIFACT buckets
-- **`.env` File Location**: Must exist in `${AWS_BUCKET_CODE}` with exact name `${AWSENV_NAME}_creds`
-- **CloudFormation Limits**: 51,200 bytes template size; use nested stacks or S3 packaging for large templates
-- **Lambda Package Size**: 50MB zipped (direct upload), 250MB unzipped (with layers) — keep dependencies minimal
-- **Error Handling**: Always use HBError class for consistent error logging and HTTP response codes
-- **API Gateway Stages**: Swagger deployment creates/updates stages — ensure stage name matches environment
-- **IAM Role Creation**: CloudFormation must have permissions to create IAM roles for Lambda execution
-- **__init__.py Required**: Missing `__init__.py` breaks Python imports — include in all directories
-- **Makefile Targets**: Target names must match directory names in `src/` exactly (case-sensitive)
+- **Python 3.7 EOL**: Runtime is end-of-life. Cannot create new Lambda functions with this runtime on AWS. Upgrade to 3.12.
+- **`ALIAS` is required**: The `deploy` target requires `ALIAS` env var but this is not obvious from the README. Deploy will fail at `_check-alias` without it.
+- **`lib/env.py` must exist**: Any import of `lib.common` fails if `lib/env.py` does not exist (generated at build time). Run `make .env` first, or the local runner will crash.
+- **`run.py` is duplicated**: The file contains the same script twice (lines 1-77 repeated at 78-155). This is a bug.
+- **`sed -i` breaks on macOS**: The Makefile `api` target uses `sed -i` without the BSD-required `''` argument. The API deployment will fail on macOS.
+- **Wildcard IAM in template**: The boilerplate grants `dynamodb:*` on all tables. Scope this down immediately when creating a real project.
+- **boto3 in requirements.txt**: Lambda runtime provides boto3. Including it in requirements bloats the ZIP by ~80MB. Remove it unless you need a specific version.
+- **SNS topic hardcoded**: Error alarm references `hb-notification-email` SNS topic. Ensure this exists in your account or the stack will fail to create.
+- **GitHub Actions branch mismatch**: Backup workflow triggers on `develop` but repo default branch is `master`.
+- **No `.env` in git**: Both `.env` and `lib/env.py` are gitignored. This is correct (secrets), but means you cannot run locally without AWS access to download the env file.
+- **`__init__.py` required everywhere**: Missing `__init__.py` in any `src/` subdirectory silently breaks Python imports.
+- **Swagger variable substitution**: The `%VAR%` placeholders in Swagger YAML are replaced by `sed` at deploy time. Do not use `%` in other contexts in the YAML.
+- **Lambda package size**: 50MB zipped limit. Keep dependencies minimal. Current `requirements.txt` with boto3 is dangerously close to this limit.
